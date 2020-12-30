@@ -7,6 +7,19 @@
 #include "decoder.h"
 #include "test.h"
 
+typedef enum {
+  NONE,
+  FUEL,
+  IGNITION,
+} event_type;
+
+struct event {
+  event_type type;
+  float angle;
+  int pin;
+};
+
+
 struct validator {
   struct decoder decoder;
   struct test_case *test_case;
@@ -22,6 +35,7 @@ struct validated_change {
   float angle;
   uint32_t pin;
   bool value;
+  struct event event;
 };
 
 bool validate_next(struct validator *v, struct validated_change *);
