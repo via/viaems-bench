@@ -2,31 +2,25 @@
 #define DECODER_H
 
 #include <stdint.h>
+#include <stdatomic.h>
 
 struct trigger_event {
   uint32_t time;
   uint32_t trigger;
 };
 
-struct decoder;
-typedef void (*decode_func)(struct decoder *, uint32_t time, int n);
-typedef struct trigger_event (*generate_func)(struct decoder *d, float rpm);
-typedef float (*angle_func)(struct decoder *d, uint32_t time);
-
-struct decoder {
-  decode_func decode;
-  generate_func generate;
-  angle_func angle;
-  uint32_t n_triggers;
-  float degrees_per_trigger;
+struct wheel {
+  uint32_t pattern[720];
   float offset;
 
-  uint32_t last_trigger_time;
-  uint32_t triggers_since_sync;;
-  float last_trigger_angle;
-  float rpm;
+  volatile uint32_t degree;
+  volatile uint32_t revolutions;
 };
 
-struct decoder create_decoder_missing_36minus1and1();
+struct wheel make_wheel_cam24plus1();
+
+void wheel_wait_revolutions(struct wheel *w, uint32_t revs);
+float wheel_angle(struct wheel *w);
+void wheel_set_rpm(uint32_t);
 
 #endif

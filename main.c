@@ -4,36 +4,27 @@
 #include "validation.h"
 
 
+static void execute_test() {
 
-static void execute_missing_tooth_startup() {
-  uint32_t start_time = current_time() + 4000000;
+  struct wheel mtw = make_wheel_cam24plus1();
+  struct validator validator;
+  struct test_case tc = (struct test_case){.wheel = &mtw, .validator = &validator};
 
-  struct test_case tc = initialize_static_test_case(start_time);
-  struct decoder d = create_decoder_missing_36minus1and1();
-
-  for (int i = 0; i < 500; i++, i++) {
-    add_trigger(&tc, d.generate(&d, 1000));
-  }
-
-  
+  set_wheel_pattern(&mtw);
   start_recording_outputs(&tc);
-  execute_inputs(&tc);
+  wheel_set_rpm(1000);
+  while(1);
+  wheel_wait_revolutions(&mtw, 10);
+  wheel_set_rpm(0);
+
+  wait_seconds(1);
+
   stop_recording_outputs();
-
-  struct validator v = {
-    .decoder = create_decoder_missing_36minus1and1(),
-    .test_case = &tc,
-  };
-  struct validated_change evs[128];
-  struct validated_change *ve = &evs[0];
-  while (1);
 }
-
-
 
 int main(void) {
   platform_init();
 
-  execute_missing_tooth_startup();
+  execute_test();
   while(1);
 }

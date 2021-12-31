@@ -58,13 +58,6 @@ static void setup_spi() {
 
   spi_enable_tx_dma(SPI2);
   spi_enable(SPI2);
-
-  /* Use exti to trigger prepare_fake_adc_tx on rising CS edge */
-  nvic_enable_irq(NVIC_EXTI15_10_IRQ);
-  exti_select_source(EXTI12, GPIOB);
-  exti_set_trigger(EXTI12, EXTI_TRIGGER_RISING);
-  exti_enable_request(EXTI12);
-
 }
 
 void exti15_10_isr() {
@@ -75,20 +68,20 @@ void exti15_10_isr() {
   __asm__("isb");
 }
 
-uint32_t current_time() {
+uint32_t current_time_microseconds() {
   return timer_get_counter(TIM5);
 }
 
-static void wait_until(uint32_t time) {
-  while ((int32_t)(time - current_time()) > 0);
+void wait_seconds(uint32_t seconds) {
+  uint32_t current = current_time_microseconds();
+  while ((int32_t)(current_time_microseconds() - current) > 1000000 * seconds);
 }
-
 
 static void setup_timer() {
 
   rcc_periph_clock_enable(RCC_TIM8);
   timer_set_mode(TIM8, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-  timer_set_period(TIM8, 41); /* 0.25 uS */
+  timer_set_period(TIM8, 167); /* 1 uS */
   timer_set_prescaler(TIM8, 0);
   timer_disable_preload(TIM8);
   timer_continuous_mode(TIM8);
@@ -123,11 +116,77 @@ static void setup_triggers() {
   gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO1);
 }
 
+static struct wheel *current_wheel = NULL;
 
-static struct test_case *recording_test;
+void set_wheel_pattern(struct wheel *w) {
+  rcc_periph_clock_enable(RCC_DMA2);
+  rcc_periph_clock_enable(RCC_TIM1);
+
+  current_wheel = w;
+
+  /* dma1 stream 1, channel 7*/
+  dma_stream_reset(DMA2, DMA_STREAM5);
+  dma_set_priority(DMA2, DMA_STREAM5, DMA_SxCR_PL_HIGH);
+  dma_set_memory_size(DMA2, DMA_STREAM5, DMA_SxCR_MSIZE_32BIT);
+  dma_set_peripheral_size(DMA2, DMA_STREAM5, DMA_SxCR_PSIZE_32BIT);
+  dma_enable_memory_increment_mode(DMA2, DMA_STREAM5);
+  dma_set_transfer_mode(DMA2, DMA_STREAM5, DMA_SxCR_DIR_MEM_TO_PERIPHERAL);
+  dma_enable_circular_mode(DMA2, DMA_STREAM5);
+  dma_set_peripheral_address(DMA2, DMA_STREAM5, (uint32_t)&GPIOA_ODR);
+  dma_set_memory_address(DMA2, DMA_STREAM5, (uint32_t)w->pattern);
+  dma_set_number_of_data(DMA2, DMA_STREAM5, 720);
+  dma_channel_select(DMA2, DMA_STREAM5, DMA_SxCR_CHSEL_6);
+  dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM5);
+  dma_enable_stream(DMA2, DMA_STREAM5);
+
+  /* Set up TIM6 to trigger interrupts at a later-determined interval */
+  timer_set_counter(TIM1, 0);
+  timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+  timer_set_period(TIM1, 4000);
+  timer_set_prescaler(TIM1, 0); /* 168 MHz */
+  timer_enable_preload(TIM1);
+  timer_continuous_mode(TIM1);
+  timer_enable_update_event(TIM1);
+  timer_update_on_overflow(TIM1);
+  timer_set_dma_on_update_event(TIM1);
+  TIM1_DIER |= TIM_DIER_UDE; /* Enable update dma */
+
+  timer_enable_irq(TIM1, TIM_DIER_UIE);
+  nvic_enable_irq(NVIC_TIM1_UP_TIM10_IRQ);
+
+  nvic_enable_irq(NVIC_DMA2_STREAM5_IRQ);
+}
+
+void tim1_up_tim10_isr() {
+  if (timer_get_flag(TIM1, TIM_SR_UIF)) {
+    timer_clear_flag(TIM1, TIM_SR_UIF);
+    uint32_t current = current_wheel->degree;
+    current += 1;
+    if (current >= 720) {
+      current = 0;
+    }
+    current_wheel->degree = current;
+  }
+}
+
+void dma2_stream5_isr() {
+  if (dma_get_interrupt_flag(DMA2, DMA_STREAM5, DMA_TCIF)) {
+    dma_clear_interrupt_flags(DMA2, DMA_STREAM5, DMA_TCIF);
+    current_wheel->revolutions++;
+  }
+}
+
+void set_wheel_degree_period(uint32_t ns) {
+  if (ns > 0) {
+    uint32_t clocks = 168 * ns / 1000;
+    timer_set_period(TIM1, clocks  - 1);
+    timer_enable_counter(TIM1);
+  } else {
+    timer_disable_counter(TIM1);
+  }
+}
 
 void start_recording_outputs(struct test_case *tc) {
-  recording_test = tc;
   rcc_periph_clock_enable(RCC_GPIOE);
   /* Enable GPIO E0-7 as input */
   gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, 0x00FF);
@@ -154,14 +213,23 @@ void stop_recording_outputs() {
 }
 
 
+struct bleh {
+  uint32_t time;
+  uint32_t angle;
+  uint16_t values;
+};
+
+struct bleh blehs[32];
+int n_bleh = 0;
+
 static void record_gpio_change() {
   uint32_t flag_changes = exti_get_flag_status(0xFF);
   uint32_t gpio = gpio_port_read(GPIOE);
+  if (n_bleh < 32) {
+    blehs[n_bleh] = (struct bleh){.time = current_time_microseconds(), .angle = current_wheel->degree, .values = gpio};
+    n_bleh++;
+  }
   exti_reset_request(flag_changes);
-  uint32_t at_time = current_time();
-  recording_test->outputs[recording_test->n_outputs].time = at_time;
-  recording_test->outputs[recording_test->n_outputs].outputs = gpio;
-  recording_test->n_outputs += 1;
   __asm__("dsb");
   __asm__("isb");
 }
@@ -183,29 +251,6 @@ void exti4_isr() {
 }
 void exti9_5_isr() {
   record_gpio_change();
-}
-
-void execute_inputs(struct test_case *tc) {
-
-  uint32_t evnum = 0;
-
-  while (evnum < tc->n_inputs) {
-    struct ems_input_event *ev = &tc->inputs[evnum];
-
-    wait_until(tc->start_time + ev->time);
-    
-    if (ev->trigger == 0) {
-      gpio_set(GPIOA, GPIO0);
-      gpio_clear(GPIOA, GPIO0);
-    } else if (ev->trigger == 1) {
-      gpio_set(GPIOA, GPIO1);
-      gpio_clear(GPIOA, GPIO1);
-    }
-    ev->time += tc->start_time;
-
-    memcpy(&spi_tx_buf[1], ev->adc, sizeof(uint16_t) * 8);
-    evnum += 1;
-  }
 }
 
 void platform_init() {
