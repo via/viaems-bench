@@ -5,7 +5,7 @@ OD=bin
 
 all: main.elf
 
-CFLAGS= --static -nostartfiles -std=c11 -g3 -O0
+CFLAGS= --static -nostartfiles -std=c11 -g3 -O2
 CFLAGS+= -fno-common -ffunction-sections -fdata-sections
 CFLAGS+= -I./libopencm3/include -L./libopencm3/lib
 CFLAGS+= -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16

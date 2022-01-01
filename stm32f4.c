@@ -7,8 +7,10 @@
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/exti.h>
 #include <libopencm3/cm3/nvic.h>
+#include <libopencm3/cm3/scb.h>
 #include "libopencm3/stm32/f4/rcc.h"
 
+#include "validation.h"
 #include "test.h"
 
 #define SPI_WRITE_COUNT 9
@@ -153,8 +155,11 @@ void set_wheel_pattern(struct wheel *w) {
 
   timer_enable_irq(TIM1, TIM_DIER_UIE);
   nvic_enable_irq(NVIC_TIM1_UP_TIM10_IRQ);
+  nvic_set_priority(NVIC_TIM1_UP_TIM10_IRQ, 0);
 
   nvic_enable_irq(NVIC_DMA2_STREAM5_IRQ);
+  nvic_set_priority(NVIC_DMA2_STREAM5_IRQ, 0);
+  
 }
 
 void tim1_up_tim10_isr() {
@@ -186,7 +191,10 @@ void set_wheel_degree_period(uint32_t ns) {
   }
 }
 
+
+static struct validator *current_validator = NULL;
 void start_recording_outputs(struct test_case *tc) {
+  current_validator = tc->validator;
   rcc_periph_clock_enable(RCC_GPIOE);
   /* Enable GPIO E0-7 as input */
   gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, 0x00FF);
@@ -197,6 +205,13 @@ void start_recording_outputs(struct test_case *tc) {
   nvic_enable_irq(NVIC_EXTI3_IRQ);
   nvic_enable_irq(NVIC_EXTI4_IRQ);
   nvic_enable_irq(NVIC_EXTI9_5_IRQ);
+
+  nvic_set_priority(NVIC_EXTI0_IRQ, 32);
+  nvic_set_priority(NVIC_EXTI1_IRQ, 32);
+  nvic_set_priority(NVIC_EXTI2_IRQ, 32);
+  nvic_set_priority(NVIC_EXTI3_IRQ, 32);
+  nvic_set_priority(NVIC_EXTI4_IRQ, 32);
+  nvic_set_priority(NVIC_EXTI9_5_IRQ, 32);
 
   exti_select_source(0xFF, GPIOE);
   exti_set_trigger(0xFF, EXTI_TRIGGER_BOTH);
@@ -219,16 +234,16 @@ struct bleh {
   uint16_t values;
 };
 
-struct bleh blehs[32];
-int n_bleh = 0;
-
 static void record_gpio_change() {
+  uint32_t time = current_time_microseconds();
   uint32_t flag_changes = exti_get_flag_status(0xFF);
   uint32_t gpio = gpio_port_read(GPIOE);
-  if (n_bleh < 32) {
-    blehs[n_bleh] = (struct bleh){.time = current_time_microseconds(), .angle = current_wheel->degree, .values = gpio};
-    n_bleh++;
-  }
+  struct ems_output_event ev = (struct ems_output_event){
+    .time = time,
+    .angle = current_wheel->degree,
+    .outputs = gpio,
+  };
+  validate_next(current_validator, &ev);
   exti_reset_request(flag_changes);
   __asm__("dsb");
   __asm__("isb");
@@ -256,7 +271,9 @@ void exti9_5_isr() {
 void platform_init() {
   rcc_clock_setup_pll(&rcc_hse_8mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
   rcc_periph_clock_enable(RCC_SYSCFG);
-  setup_spi();
+
+  scb_set_priority_grouping(SCB_AIRCR_PRIGROUP_GROUP16_NOSUB);
+
   setup_timer();
   setup_triggers();
 }

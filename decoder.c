@@ -7,11 +7,11 @@
 struct wheel make_wheel_cam24plus1() {
   struct wheel w = { 0 };
   for (uint32_t i = 0; i < 720; i++) {
-    if (i % 10 < 2) {
+    if (i % 30 < 2) {
       w.pattern[i] |= 0x1;
     }
   }
-  w.pattern[35] |= 0x2;
+  w.pattern[670] |= 0x2;
   return w;
 }
 
