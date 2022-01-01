@@ -29,6 +29,11 @@ static void validate_falling_edge(struct validator *v, struct ems_output_event *
     v->validation[i].occurances++;
     uint32_t duration = ev->time - v->rising_times[pin];
     v->last_durations[i] = duration;
+    if (v->triggereds[i]) {
+      v->validation[i].duplicates++;
+    }
+    v->triggereds[i] = true;
+    v->started[i] = true;
     if (duration < c->duration_us_lower_bound || duration > c->duration_us_upper_bound) {
       v->validation[i].bad_durations++;
     }

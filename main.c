@@ -43,27 +43,42 @@ static struct input_configuration pinconfig[] = {
   { .enabled = false },
 };
 
-static void execute_test() {
+static void execute_rpm_ramp_long() {
 
   struct wheel mtw = make_wheel_cam24plus1();
   struct validator validator = (struct validator){.configuration = pinconfig};;
   struct test_case tc = (struct test_case){.wheel = &mtw, .validator = &validator};
 
+  uint32_t rpm = 1000;
+  bool ascending = true;
+
   set_wheel_pattern(&mtw);
   start_recording_outputs(&tc);
-  wheel_set_rpm(1000);
-  while(1);
-  wheel_wait_revolutions(&mtw, 10);
+  while (mtw.revolutions < 10000) {
+    wheel_set_rpm(rpm);
+    wait_microseconds(1000);
+    if (ascending) {
+      rpm += 1;
+      if (rpm > 6000) {
+        ascending = false;
+      }
+    } else {
+      rpm -= 1;
+      if (rpm < 1000) {
+        ascending = true;
+      }
+    }
+  }
   wheel_set_rpm(0);
 
   wait_seconds(1);
-
   stop_recording_outputs();
+  while(1);
 }
 
 int main(void) {
   platform_init();
 
-  execute_test();
+  execute_rpm_ramp_long();
   while(1);
 }

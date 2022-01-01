@@ -20,13 +20,17 @@ struct input_configuration {
 };
 
 struct input_validation {
+  uint32_t misses;
   uint32_t occurances;
   uint32_t bad_durations;
+  uint32_t duplicates;
 };
   
 struct validator {
   uint32_t rising_times[16];
   uint32_t last_durations[16];
+  bool triggereds[16];
+  bool started[16];
   uint16_t outputs;
   struct input_configuration *configuration;
   struct input_validation validation[16];

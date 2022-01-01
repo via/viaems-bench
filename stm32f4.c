@@ -10,6 +10,7 @@
 #include <libopencm3/cm3/scb.h>
 #include "libopencm3/stm32/f4/rcc.h"
 
+#include "platform.h"
 #include "validation.h"
 #include "test.h"
 
@@ -75,8 +76,12 @@ uint32_t current_time_microseconds() {
 }
 
 void wait_seconds(uint32_t seconds) {
+  wait_microseconds(seconds * 1000000);
+}
+
+void wait_microseconds(uint32_t microseconds) {
   uint32_t current = current_time_microseconds();
-  while ((int32_t)(current_time_microseconds() - current) > 1000000 * seconds);
+  while ((int32_t)(current_time_microseconds() - current) < microseconds);
 }
 
 static void setup_timer() {
@@ -162,17 +167,6 @@ void set_wheel_pattern(struct wheel *w) {
   
 }
 
-void tim1_up_tim10_isr() {
-  if (timer_get_flag(TIM1, TIM_SR_UIF)) {
-    timer_clear_flag(TIM1, TIM_SR_UIF);
-    uint32_t current = current_wheel->degree;
-    current += 1;
-    if (current >= 720) {
-      current = 0;
-    }
-    current_wheel->degree = current;
-  }
-}
 
 void dma2_stream5_isr() {
   if (dma_get_interrupt_flag(DMA2, DMA_STREAM5, DMA_TCIF)) {
@@ -191,8 +185,35 @@ void set_wheel_degree_period(uint32_t ns) {
   }
 }
 
-
 static struct validator *current_validator = NULL;
+
+void tim1_up_tim10_isr() {
+  if (timer_get_flag(TIM1, TIM_SR_UIF)) {
+    timer_clear_flag(TIM1, TIM_SR_UIF);
+    uint32_t current = current_wheel->degree;
+    current += 1;
+    if (current >= 720) {
+      current = 0;
+    }
+    current_wheel->degree = current;
+    if (current_validator) {
+      for (int i = 0; i < 16; i++) {
+        struct input_configuration *conf = &current_validator->configuration[i];
+        int32_t angle = (int32_t)conf->end_angle - (int32_t)conf->end_advance_lower_bound;
+        if (angle < 0) angle += 720;
+        if (angle >= 720) angle -= 720;
+        if (conf->enabled &&
+            (angle == current)) {
+          if (current_validator->started[i] && !current_validator->triggereds[i]) {
+            current_validator->validation[i].misses++;
+          }
+          current_validator->triggereds[i] = false;
+        }
+      }
+    }
+  }
+}
+
 void start_recording_outputs(struct test_case *tc) {
   current_validator = tc->validator;
   rcc_periph_clock_enable(RCC_GPIOE);
